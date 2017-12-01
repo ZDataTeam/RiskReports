@@ -1,0 +1,10 @@
+
+.vscode
+__pycache__
+
+config.py
+
+*xls*
+*doc*
+
+settings.yaml
