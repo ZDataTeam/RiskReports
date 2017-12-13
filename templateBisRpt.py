@@ -232,7 +232,7 @@ if __name__=='__main__':
                'prov_cd':'省市',
                'white':'白户',
                'applysource':'特例违例',
-               'reloan':'首续贷',
+               'reloantimes':'首续贷',
                'stage':'阶段',
                'light':'红黄绿灯',
                'loan_period_mon':'贷款期长'}
@@ -245,7 +245,7 @@ if __name__=='__main__':
     db_month_end = pd.read_sql(sql, engine_oracle)
     
     #%% 套表
-    for gp in ['', 'aipmchttype', 'loan_period_mon', 'repay_period', 'white', 'applysource', 'reloan', 'light', 'prov_cd', 'stage']:
+    for gp in ['', 'aipmchttype', 'loan_period_mon', 'repay_period', 'white', 'applysource', 'reloantimes', 'light', 'prov_cd', 'stage']:
         
 #        # 调试
 #        if gp not in ['stage', 'prov_cd']:
@@ -257,7 +257,7 @@ if __name__=='__main__':
         if gp=='aipmchttype':
             db_data[gp] = db_month_end[gp].map(lambda x: 1 if x==3 else x)
         
-        if gp=='reloan':
+        if gp=='reloantimes':
             data_reloan = reloan(db_data, dct_dimension, dct_col, ['data_dt'], ['begin_date'])
             db_data[gp] = db_month_end[gp].map(lambda x: '首贷' if x==1 else '续贷')
             
@@ -300,7 +300,7 @@ if __name__=='__main__':
             data_vintage_ex_xiamen[0].to_excel(writer, sheet_name='非厦门资产情况', startrow=0, startcol=0)
             data_vintage_ex_xiamen[1].to_excel(writer, sheet_name='非厦门资产情况', startrow=data_vintage_ex_xiamen[0].shape[0]+5, startcol=0)
             
-            if gp=='reloan':
+            if gp=='reloantimes':
                 data_reloan[0].to_excel(writer, sheet_name='历史情况', startrow=0, startcol=0)
                 data_reloan[1].to_excel(writer, sheet_name='历史情况', startrow=data_reloan[0].shape[0]+5, startcol=0)
     
