@@ -155,13 +155,17 @@ def vintage(db_data, dct_dimension, dct_col, gp_keys_all):
                              pd.Index(data_all_pct[dct_col['begin_date']]))
         
     elif gp_keys_all == ['stage', 'begin_date']: # 特殊处理 stage
+        # 获取节点月末日期
+        lst_month_break = sorted([pd.datetime.strptime(x.split(',')[0][-10:], '%Y/%m/%d') + pd.tseries.offsets.MonthEnd()
+                            for x in dct_dimension['stage'].values()])
+        
         # 金额
         data_all_value = patch(db_data.pivot_table(values='od_amt', index=gp_keys_all[0], columns=['data_dt'], aggfunc='sum'),
-                               pd.DatetimeIndex(['2015-08-31','2016/03/31','2016/10/30'])) #TODO：考虑周频率
+                               pd.DatetimeIndex([x.strftime('%Y/%m/%d') for x in lst_month_break])) #TODO：考虑周频率
         
         # 比例
         temp_value = patch(db_data.pivot_table(values='loan_pr', index=gp_keys_all[0], columns=['data_dt'], aggfunc='sum'),
-                           pd.DatetimeIndex(['2015-08-31','2016/03/31','2016/10/30']))
+                           pd.DatetimeIndex([x.strftime('%Y/%m/%d') for x in lst_month_break]))
         data_all_pct = data_all_value / temp_value
         
     else: # 一般情况
