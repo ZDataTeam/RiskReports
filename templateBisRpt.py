@@ -216,8 +216,7 @@ if __name__=='__main__':
                                   connect_args={'encoding':'utf8', 'nencoding':'utf8'})
     
     # 获取字典
-    sql = "select * from risk_dimension"
-    db_dimension = pd.read_sql(sql, engine_oracle)
+    db_dimension = pd.read_sql("select * from risk_dimension", engine_oracle)
     
     dct_dimension = {db_dimension.iloc[x,0].lower():{} for x in range(len(db_dimension))}
     [dct_dimension[db_dimension.iloc[x,0].lower()].update({db_dimension.iloc[x,1]:db_dimension.iloc[x,2]}) for x in range(len(db_dimension))]
@@ -241,10 +240,17 @@ if __name__=='__main__':
                'light':'红黄绿灯',
                'loan_period_mon':'贷款期长'}
 
+    # 更新月末数据：可修改refresh_all全部刷新
+    refresh_all = False
+    lst_month = pd.date_range('20151101',pd.datetime.today(),freq='M')
+    db_data_dt = pd.read_sql("select distinct data_dt from thbl.risk_statistics_all", engine_oracle)
+    with engine_oracle.begin() as conn:
+            target_month = lst_month if refresh_all else set(lst_month)-set(db_data_dt.data_dt)
+            for dt in target_month:
+                conn.execute("call RISK_STAT_MONTH('{0}',0)".format(dt.strftime('%Y%m%d')))
+
     # 获取月末数据
-    lst_month = pd.date_range('20150801',pd.datetime.today(),freq='M')
     str_month = ', '.join(["TO_DATE('"+x.strftime('%Y%m%d')+"', 'YYYYMMDD')" for x in lst_month])
-    
     sql = "select * from thbl.risk_statistics_all where data_dt in ({0})".format(str_month)
     db_month_end = pd.read_sql(sql, engine_oracle)
     
