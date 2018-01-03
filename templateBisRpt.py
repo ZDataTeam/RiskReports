@@ -200,7 +200,7 @@ def reloan(db_data, dct_dimension, dct_col, gp_keys_mcd, gp_keys_db):
     db_1 = db_data[(db_data.new_loan == 1) & (db_data.reloan > 1)][gp_keys_db+['cnt', 'loan_pr']].groupby(gp_keys_db).sum().rename(
             columns={'cnt':'续贷人次', 'loan_pr':'续贷金额'})
     db_2 = db_data[(db_data.reloantimes != 1)][gp_keys_mcd+['cnt', 'loan_pr']].groupby(gp_keys_mcd).sum().rename(
-            columns={'cnt':'累计续贷人次', 'loan_pr':'累计续贷金额'})
+            columns={'cnt':'累计续贷人次', 'loan_pr':'累计续贷金额'}) # gp_keys_mcd没错
 
     dfs_db = [db_1, db_2]
     data_db = pd.concat(dfs_db, axis=1).fillna(0)
@@ -244,10 +244,11 @@ if __name__=='__main__':
     refresh_all = False
     lst_month = pd.date_range('20151101',pd.datetime.today(),freq='M')
     db_data_dt = pd.read_sql("select distinct data_dt from thbl.risk_statistics_all", engine_oracle)
+    target_month = lst_month if refresh_all else set(lst_month)-set(db_data_dt.data_dt)
     with engine_oracle.begin() as conn:
-            target_month = lst_month if refresh_all else set(lst_month)-set(db_data_dt.data_dt)
-            for dt in target_month:
-                conn.execute("call RISK_STAT_MONTH('{0}',0)".format(dt.strftime('%Y%m%d')))
+        for dt in target_month:
+            conn.execute("call RISK_STAT_MONTH('{0}',0)".format(dt.strftime('%Y%m%d')))
+            print('新增数据：' + dt.strftime('%F'))
 
     # 获取月末数据
     str_month = ', '.join(["TO_DATE('"+x.strftime('%Y%m%d')+"', 'YYYYMMDD')" for x in lst_month])
@@ -257,9 +258,9 @@ if __name__=='__main__':
     #%% 套表
     for gp in ['', 'aipmchttype', 'loan_period_mon', 'repay_period', 'white', 'applysource', 'reloantimes', 'light', 'prov_cd', 'stage']:
         
-#        # 调试
-#        if gp not in ['stage', 'prov_cd']:
-#            continue 
+        # # 调试
+        # if gp not in ['reloantimes']:
+        #     continue 
         
         db_data = db_month_end
         
@@ -271,6 +272,11 @@ if __name__=='__main__':
             data_reloan = reloan(db_data, dct_dimension, dct_col, ['data_dt'], ['begin_date'])
             db_data[gp] = db_month_end[gp].map(lambda x: '首贷' if x==1 else '续贷')
             
+        #     # 临时增加：首续贷_特例违例
+        #     data_overdue_temp = overdue(db_data, dct_dimension, dct_col, ['reloantimes', 'applysource', 'data_dt'], ['reloantimes', 'applysource', 'loan_pr_scope'])
+        #     with pd.ExcelWriter('风险报表_首续贷_特例违例.xlsx', datetime_format='yyyy年mm月') as writer:
+        #         data_overdue_temp[0].to_excel(writer, sheet_name='逾期不良')
+
         # 资产情况
         if gp=='prov_cd':
             # vintage表取全量数据
@@ -311,8 +317,8 @@ if __name__=='__main__':
             data_vintage_ex_xiamen[1].to_excel(writer, sheet_name='非厦门资产情况', startrow=data_vintage_ex_xiamen[0].shape[0]+5, startcol=0)
             
             if gp=='reloantimes':
-                data_reloan[0].to_excel(writer, sheet_name='历史情况', startrow=0, startcol=0)
-                data_reloan[1].to_excel(writer, sheet_name='历史情况', startrow=data_reloan[0].shape[0]+5, startcol=0)
+                data_reloan[0].to_excel(writer, sheet_name='续贷历史情况', startrow=0, startcol=0)
+                data_reloan[1].to_excel(writer, sheet_name='续贷历史情况', startrow=data_reloan[0].shape[0]+5, startcol=0)
     
         writer = xw.Book(str_file_name)
         [x.autofit() for x in writer.sheets]
