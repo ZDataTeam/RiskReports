@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 import config
 
 def _translate(df, dct_dimension, dct_col, is_dimension=False):
+    """翻译字段"""
 
     temp = df.copy()
     
@@ -27,7 +28,40 @@ def _translate(df, dct_dimension, dct_col, is_dimension=False):
 
     return(temp)
 
+def _patch(df, idx_dates=None):
+    """将数据透视表缺失月份列，转化为vintage"""
+    temp = df.copy()
+    
+    # idx_dates是df的日期index列表
+    if idx_dates is None:
+        if isinstance(temp.index, pd.MultiIndex):
+            idx_dates = temp.index.get_level_values(len(temp.index.levels)-1)
+        else:
+            idx_dates = temp.index
+    
+    # 插入新列
+    for i, dt in enumerate(pd.date_range('20150801', pd.datetime.today().strftime('%Y%m%d'), freq='M')):
+        if dt not in temp.columns:
+            temp.insert(i, dt, idx_dates.map(lambda x: pd.np.nan if x > dt else 0))
+    
+    # 对角线空白补零
+    try:
+        for dt in temp.columns:
+            if pd.isnull(temp.loc[dt, dt]):
+                temp.loc[dt, dt] = 0
+    except KeyError: # 忽略错误
+        pass
+    
+    # 左移空白单元格
+    temp = temp.apply(lambda x:x.shift(-x.index.get_loc(x.first_valid_index())), axis=1).rename(
+            columns=lambda x: '第' + 
+            str(pd.offsets.relativedelta(x, db_data.begin_date.min()).years * 12 + pd.offsets.relativedelta(x, db_data.begin_date.min()).months) + 
+            '个月')
+    
+    return(temp)
+
 def overdue(db_data, dct_dimension, dct_col, gp_keys_all, gp_keys_last):
+    """逾期不良表"""
 
     # 每月数据
     all_1 = db_data[gp_keys_all+['cnt','loan_pr','bal_prin','bal']].groupby(gp_keys_all).sum().rename(
@@ -61,8 +95,27 @@ def overdue(db_data, dct_dimension, dct_col, gp_keys_all, gp_keys_last):
     return([_translate(data_all,dct_dimension,dct_col), 
             _translate(data_last,dct_dimension,dct_col)])
 
+def overdue_toukong(db_data, dct_dimension, dct_col, gp_keys_all):
+    """投控逾期不良"""
+    
+    all_1 = db_data[gp_keys_all+['bal_prin']].groupby(gp_keys_all).sum().rename(
+            columns={'bal_prin':'期末本金'})
+    all_2 = db_data[(db_data.maturity_days > 0)][gp_keys_all+['od_principal_0']].groupby(gp_keys_all).sum().rename(
+            columns={'od_principal_0':'逾期本金'})
+    all_3 = db_data[(db_data.maturity_days > 2)][gp_keys_all+['od_principal_0']].groupby(gp_keys_all).sum().rename(
+            columns={'od_principal_0':'不良本金'})
+    
+    dfs_all = [all_1, all_2, all_3]
+    data_all = pd.concat(dfs_all, axis=1).fillna(0)
+    data_all['逾期率'] = data_all['逾期本金'] / data_all['期末本金']
+    data_all['不良率'] = data_all['不良本金'] / data_all['期末本金']
+    
+    # 返回结果
+    return(_translate(data_all,dct_dimension,dct_col))
+    
 def status_trans(db_data, dct_dimension, dct_col, index_values, pivot_values_all, pivot_values_trans):
-
+    """状态迁徙表"""
+    
     # 翻译维度
     db_data = _translate(db_data, dct_dimension, dct_col, True)
     
@@ -115,25 +168,7 @@ def status_trans(db_data, dct_dimension, dct_col, index_values, pivot_values_all
             _translate(data_trans,dct_dimension,dct_col)])
 
 def vintage(db_data, dct_dimension, dct_col, gp_keys_all):
-    
-    def patch(df, idx_begin=None):
-        """将数据透视表新增三列，转化为vintage"""
-        temp = df
-        idx_begin = idx_begin if (idx_begin is not None) else temp.index
-        
-        temp.insert(0, pd.Timestamp('2015-08-31 00:00:00'), idx_begin.map(lambda x: 
-            pd.np.nan if (x[1] if isinstance(idx_begin, pd.core.indexes.multi.MultiIndex) else x)>pd.Timestamp('2015-08-31 00:00:00') else 0))
-        temp.insert(1, pd.Timestamp('2015-09-30 00:00:00'), idx_begin.map(lambda x: 
-            pd.np.nan if (x[1] if isinstance(idx_begin, pd.core.indexes.multi.MultiIndex) else x)>pd.Timestamp('2015-09-30 00:00:00') else 0))
-        temp.insert(2, pd.Timestamp('2015-10-31 00:00:00'), idx_begin.map(lambda x: 
-            pd.np.nan if (x[1] if isinstance(idx_begin, pd.core.indexes.multi.MultiIndex) else x)>pd.Timestamp('2015-10-31 00:00:00') else 0))
-            
-        temp = temp.apply(lambda x:x.shift(-x.index.get_loc(x.first_valid_index())), axis=1).rename(
-                columns=lambda x: '第' + 
-                str(pd.offsets.relativedelta(x, db_data.begin_date.min()).years * 12 + pd.offsets.relativedelta(x, db_data.begin_date.min()).months) + 
-                '个月')
-        
-        return(temp)
+    """vintage表"""
     
     if gp_keys_all == ['prov_cd']: # 特殊处理 prov_cd
         # 金额
@@ -142,7 +177,7 @@ def vintage(db_data, dct_dimension, dct_col, gp_keys_all):
         
         dfs_all = [all_1, all_2]
         data_all_value = pd.concat(dfs_all, axis=1).reindex(all_1.index)
-        data_all_value = patch(data_all_value.set_index([data_all_value.index, dct_col['begin_date']]), 
+        data_all_value = _patch(data_all_value.set_index([data_all_value.index, dct_col['begin_date']]), 
                                pd.Index(data_all_value[dct_col['begin_date']]))
         
         # 比例
@@ -151,7 +186,7 @@ def vintage(db_data, dct_dimension, dct_col, gp_keys_all):
         
         dfs_all = [all_1, temp_pct]
         data_all_pct = pd.concat(dfs_all, axis=1).reindex(all_1.index)
-        data_all_pct = patch(data_all_pct.set_index([data_all_pct.index, dct_col['begin_date']]), 
+        data_all_pct = _patch(data_all_pct.set_index([data_all_pct.index, dct_col['begin_date']]), 
                              pd.Index(data_all_pct[dct_col['begin_date']]))
         
     elif gp_keys_all == ['stage', 'begin_date']: # 特殊处理 stage
@@ -160,11 +195,11 @@ def vintage(db_data, dct_dimension, dct_col, gp_keys_all):
                             for x in dct_dimension['stage'].values()])
         
         # 金额
-        data_all_value = patch(db_data.pivot_table(values='od_amt', index=gp_keys_all[0], columns=['data_dt'], aggfunc='sum'),
+        data_all_value = _patch(db_data.pivot_table(values='od_amt', index=gp_keys_all[0], columns=['data_dt'], aggfunc='sum'),
                                pd.DatetimeIndex([x.strftime('%Y/%m/%d') for x in lst_month_break])) #TODO：考虑周频率
         
         # 比例
-        temp_value = patch(db_data.pivot_table(values='loan_pr', index=gp_keys_all[0], columns=['data_dt'], aggfunc='sum'),
+        temp_value = _patch(db_data.pivot_table(values='loan_pr', index=gp_keys_all[0], columns=['data_dt'], aggfunc='sum'),
                            pd.DatetimeIndex([x.strftime('%Y/%m/%d') for x in lst_month_break]))
         data_all_pct = data_all_value / temp_value
         
@@ -172,7 +207,7 @@ def vintage(db_data, dct_dimension, dct_col, gp_keys_all):
         # 金额
         all_1 = db_data[db_data.data_dt == db_data.data_dt.max()][gp_keys_all+['loan_pr']].groupby(gp_keys_all).sum().rename(
                 columns={'loan_pr':'新增放款金额'})
-        all_2 = patch(db_data.pivot_table(values='od_amt', index=gp_keys_all, columns=['data_dt'], aggfunc='sum'))
+        all_2 = _patch(db_data.pivot_table(values='od_amt', index=gp_keys_all, columns=['data_dt'], aggfunc='sum'))
         
         dfs_all = [all_1, all_2]
         data_all_value = pd.concat(dfs_all, axis=1)
@@ -184,7 +219,24 @@ def vintage(db_data, dct_dimension, dct_col, gp_keys_all):
     return([_translate(data_all_value,dct_dimension,dct_col), 
             _translate(data_all_pct,dct_dimension,dct_col)])
 
+def vintage_toukong(db_data, dct_dimension, dct_col, gp_keys_all):
+    """vintage表"""
+    all_1 = db_data[db_data.data_dt == db_data.data_dt.max()][gp_keys_all+['loan_pr']].groupby(gp_keys_all).sum().rename(
+            columns={'loan_pr':'新增放款金额'})
+    all_2 = _patch(db_data[db_data.new_maturity_days == 0].pivot_table(values='od_amt_0', index=gp_keys_all, columns=['data_dt'], aggfunc='sum'))
+    all_3 = _patch(db_data[db_data.new_maturity_days >= 1].pivot_table(values='od_amt_0', index=gp_keys_all, columns=['data_dt'], aggfunc='sum'))
+    all_4 = _patch(db_data[db_data.new_maturity_days >= 3].pivot_table(values='od_amt_0', index=gp_keys_all, columns=['data_dt'], aggfunc='sum'))
+    
+    data_all_0 = pd.concat([all_1, all_2], axis=1)
+    data_all_30 = pd.concat([all_1, all_3], axis=1)
+    data_all_90 = pd.concat([all_1, all_4], axis=1)
+        
+    return([_translate(data_all_0,dct_dimension,dct_col), 
+            _translate(data_all_30,dct_dimension,dct_col),
+            _translate(data_all_90,dct_dimension,dct_col)])
+
 def reloan(db_data, dct_dimension, dct_col, gp_keys_mcd, gp_keys_db):
+    """续贷历史情况，只附加在首续贷表中"""
 
     # 按商户统计
     mcd_1 = db_data[(db_data.reloantimes == 2)][gp_keys_mcd+['cnt']].groupby(gp_keys_mcd).sum().rename(
@@ -207,6 +259,14 @@ def reloan(db_data, dct_dimension, dct_col, gp_keys_mcd, gp_keys_db):
     
     return([_translate(data_mcd,dct_dimension,dct_col), 
             _translate(data_db,dct_dimension,dct_col)])
+
+def resize_sheets(file_path):
+    """Sheets列宽自适应"""
+    
+    writer = xw.Book(file_path)
+    [x.autofit() for x in writer.sheets]
+    writer.save()
+    writer.app.quit()
 
 #%%
 if __name__=='__main__':
@@ -240,6 +300,10 @@ if __name__=='__main__':
                'light':'红黄绿灯',
                'loan_period_mon':'贷款期长'}
 
+    #%% 周末报表==============================
+    
+
+    #%% 月末报表==============================
     # 更新月末数据：可修改refresh_all全部刷新
     refresh_all = False
     lst_month = pd.date_range('20151101',pd.datetime.today(),freq='M')
@@ -255,14 +319,28 @@ if __name__=='__main__':
     sql = "select * from thbl.risk_statistics_all where data_dt in ({0})".format(str_month)
     db_month_end = pd.read_sql(sql, engine_oracle)
     
+    # 投控报表
+    db_data = db_month_end.copy()
+    toukong_overdue = overdue_toukong(db_data, dct_dimension, dct_col, ['data_dt'])
+    toukong_vintage = vintage_toukong(db_data, dct_dimension, dct_col, ['begin_date'])
+    
+    str_file_name = '风险报表_' + pd.datetime.today().strftime('%Y%m%d') + '_投控.xlsx'
+    with pd.ExcelWriter(str_file_name, datetime_format='yyyy年mm月') as writer:
+        toukong_overdue.to_excel(writer, sheet_name='逾期不良', startrow=0, startcol=0)
+        toukong_vintage[0].to_excel(writer, sheet_name='全国30天以下资产情况', startrow=0, startcol=0)
+        toukong_vintage[1].to_excel(writer, sheet_name='全国30天以上资产情况', startrow=0, startcol=0)
+        toukong_vintage[2].to_excel(writer, sheet_name='全国90天以上资产情况', startrow=0, startcol=0)
+
+    resize_sheets(str_file_name)
+
     #%% 套表
     for gp in ['', 'aipmchttype', 'loan_period_mon', 'repay_period', 'white', 'applysource', 'reloantimes', 'light', 'prov_cd', 'stage']:
         
-        # # 调试
-        # if gp not in ['reloantimes']:
-        #     continue 
+#        # 调试
+#        if gp not in ['aipmchttype', 'stage']:
+#            continue 
         
-        db_data = db_month_end
+        db_data = db_month_end.copy()
         
         # 特殊处理
         if gp=='aipmchttype':
@@ -320,7 +398,4 @@ if __name__=='__main__':
                 data_reloan[0].to_excel(writer, sheet_name='续贷历史情况', startrow=0, startcol=0)
                 data_reloan[1].to_excel(writer, sheet_name='续贷历史情况', startrow=data_reloan[0].shape[0]+5, startcol=0)
     
-        writer = xw.Book(str_file_name)
-        [x.autofit() for x in writer.sheets]
-        writer.save()
-        writer.app.quit()
+        resize_sheets(str_file_name)
