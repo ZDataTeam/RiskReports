@@ -100,9 +100,9 @@ def overdue_toukong(db_data, dct_dimension, dct_col, gp_keys_all):
     
     all_1 = db_data[gp_keys_all+['bal_prin']].groupby(gp_keys_all).sum().rename(
             columns={'bal_prin':'期末本金'})
-    all_2 = db_data[(db_data.maturity_days > 0)][gp_keys_all+['od_principal_0']].groupby(gp_keys_all).sum().rename(
+    all_2 = db_data[(db_data.new_maturity_days > 0)][gp_keys_all+['od_principal_0']].groupby(gp_keys_all).sum().rename(
             columns={'od_principal_0':'逾期本金'})
-    all_3 = db_data[(db_data.maturity_days > 2)][gp_keys_all+['od_principal_0']].groupby(gp_keys_all).sum().rename(
+    all_3 = db_data[(db_data.new_maturity_days > 2)][gp_keys_all+['od_principal_0']].groupby(gp_keys_all).sum().rename(
             columns={'od_principal_0':'不良本金'})
     
     dfs_all = [all_1, all_2, all_3]
