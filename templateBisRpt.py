@@ -221,6 +221,15 @@ def vintage(db_data, dct_dimension, dct_col, gp_keys_all):
 
 def vintage_toukong(db_data, dct_dimension, dct_col, gp_keys_all):
     """vintage表"""
+    
+    def _fill_upper(df):
+        """vintage左上半三角补零"""
+        for i in range(df.shape[0]):
+            for j in range(df.shape[1]):
+                if i+j <= df.shape[0] and pd.isnull(df.iloc[i,j]):
+                    df.iloc[i,j] = 0
+        return(df)
+    
     all_1 = db_data[db_data.data_dt == db_data.data_dt.max()][gp_keys_all+['loan_pr']].groupby(gp_keys_all).sum().rename(
             columns={'loan_pr':'新增放款金额'})
     all_2 = _patch(db_data[db_data.new_maturity_days == 0].pivot_table(values='od_amt_0', index=gp_keys_all, columns=['data_dt'], aggfunc='sum'))
@@ -231,9 +240,9 @@ def vintage_toukong(db_data, dct_dimension, dct_col, gp_keys_all):
     data_all_30 = pd.concat([all_1, all_3], axis=1)
     data_all_90 = pd.concat([all_1, all_4], axis=1)
         
-    return([_translate(data_all_0,dct_dimension,dct_col), 
-            _translate(data_all_30,dct_dimension,dct_col),
-            _translate(data_all_90,dct_dimension,dct_col)])
+    return([_fill_upper(_translate(data_all_0,dct_dimension,dct_col)), 
+            _fill_upper(_translate(data_all_30,dct_dimension,dct_col)),
+            _fill_upper(_translate(data_all_90,dct_dimension,dct_col))])
 
 def reloan(db_data, dct_dimension, dct_col, gp_keys_mcd, gp_keys_db):
     """续贷历史情况，只附加在首续贷表中"""
