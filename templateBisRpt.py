@@ -29,7 +29,7 @@ def _translate(df, dct_dimension, dct_col, is_dimension=False):
     return(temp)
 
 def _patch(df, idx_dates=None):
-    """将数据透视表缺失月份列，转化为vintage"""
+    """插入数据透视表缺失月份列，转化为vintage"""
     temp = df.copy()
     
     # idx_dates是df的日期index列表
@@ -60,27 +60,34 @@ def _patch(df, idx_dates=None):
     
     return(temp)
 
-def overdue(db_data, dct_dimension, dct_col, gp_keys_all, gp_keys_last):
+def overdue(db_data, dct_dimension, dct_col, gp_keys_all, gp_keys_last, gp_keys_prov=None):
     """逾期不良表"""
 
-    # 每月数据
-    all_1 = db_data[gp_keys_all+['cnt','loan_pr','bal_prin','bal']].groupby(gp_keys_all).sum().rename(
-            columns={'cnt':'放款人次', 'loan_pr':'放款总额', 'bal_prin':'贷款本金余额', 'bal':'贷款余额'})
-    all_2 = db_data[(db_data.overdue_status_3 != 2)][gp_keys_all+['cnt']].groupby(gp_keys_all).sum().rename(
-            columns={'cnt':'未结清户数'})
-    all_3 = db_data[(db_data.new_loan == 1)][gp_keys_all+['cnt']].groupby(gp_keys_all).sum().rename(
-            columns={'cnt':'月度新增'})
-    all_4 = db_data[(db_data.overdue_status_3 == 1)][gp_keys_all+['cnt', 'od_principal', 'od_amt']].groupby(gp_keys_all).sum().rename(
-            columns={'cnt':'本金逾期户数', 'od_principal':'本金逾期金额', 'od_amt':'逾期金额'})
-    all_5 = db_data[(db_data.overdue_status_3 == 1) & (db_data.maturity_days > 0)][gp_keys_all+['cnt', 'od_principal', 'od_amt']].groupby(gp_keys_all).sum().rename(
-            columns={'cnt':'银行逾期户数', 'od_principal':'本金银行逾期', 'od_amt':'银行逾期'})
-    all_6 = db_data[(db_data.overdue_status_3 == 1) & (db_data.maturity_days > 2)][gp_keys_all+['cnt', 'od_principal', 'od_amt']].groupby(gp_keys_all).sum().rename(
-            columns={'cnt':'不良逾期户数', 'od_principal':'本金不良金额', 'od_amt':'不良金额'})
-
-    dfs_all = [all_1, all_2, all_3, all_4, all_5, all_6]
-    data_all = pd.concat(dfs_all, axis=1).fillna(0)
+    def od_template(data, gp_keys):
+        """逾期不良模板表"""
+        all_1 = data[gp_keys+['cnt','loan_pr','bal_prin','bal']].groupby(gp_keys).sum().rename(
+                columns={'cnt':'放款人次', 'loan_pr':'放款总额', 'bal_prin':'贷款本金余额', 'bal':'贷款余额'})
+        all_2 = data[(data.overdue_status_3 != 2)][gp_keys+['cnt']].groupby(gp_keys).sum().rename(
+                columns={'cnt':'未结清户数'})
+        all_3 = data[(data.new_loan == 1)][gp_keys+['cnt']].groupby(gp_keys).sum().rename(
+                columns={'cnt':'月度新增'})
+        all_4 = data[(data.overdue_status_3 == 1)][gp_keys+['cnt', 'od_principal', 'od_amt']].groupby(gp_keys).sum().rename(
+                columns={'cnt':'本金逾期户数', 'od_principal':'本金逾期金额', 'od_amt':'逾期金额'})
+        all_5 = data[(data.overdue_status_3 == 1) & (data.maturity_days > 0)][gp_keys+['cnt', 'od_principal', 'od_amt']].groupby(gp_keys).sum().rename(
+                columns={'cnt':'银行逾期户数', 'od_principal':'本金银行逾期', 'od_amt':'银行逾期'})
+        all_6 = data[(data.overdue_status_3 == 1) & (data.maturity_days > 2)][gp_keys+['cnt', 'od_principal', 'od_amt']].groupby(gp_keys).sum().rename(
+                columns={'cnt':'不良逾期户数', 'od_principal':'本金不良金额', 'od_amt':'不良金额'})
     
-    # 当月数据
+        dfs = [all_1, all_2, all_3, all_4, all_5, all_6]
+        result = pd.concat(dfs, axis=1).fillna(0)
+        result.index.name=all_1.index.name # pandas的bug https://github.com/pandas-dev/pandas/issues/13475
+        
+        return(result)
+
+    # 每月数据
+    data_all = od_template(db_data, gp_keys_all)
+    
+    # 当月金额范围数据
     db_data_last = db_data[db_data.data_dt == db_data.data_dt.max()]
     
     last_1 = db_data_last[(db_data_last.overdue_status_3 != 2)][gp_keys_last+['cnt', 'loan_pr', 'sp_amt', 'bal']].groupby(gp_keys_last).sum().rename(
@@ -91,9 +98,14 @@ def overdue(db_data, dct_dimension, dct_col, gp_keys_all, gp_keys_last):
     dfs_last = [last_1, last_2]
     data_last = pd.concat(dfs_last, axis=1).fillna(0)
 
+    # 当月各省数据
+    if gp_keys_prov:
+        data_prov = od_template(db_data_last, gp_keys_prov)
+    
     # 返回结果
     return([_translate(data_all,dct_dimension,dct_col), 
-            _translate(data_last,dct_dimension,dct_col)])
+            _translate(data_last,dct_dimension,dct_col),
+            _translate(data_prov,dct_dimension,dct_col) if gp_keys_prov else None])
 
 def overdue_toukong(db_data, dct_dimension, dct_col, gp_keys_all):
     """投控逾期不良"""
@@ -310,18 +322,40 @@ if __name__=='__main__':
                'loan_period_mon':'贷款期长'}
 
     #%% 周末报表==============================
+    # 更新最近一个周四的数据，通过参数n调整最近第几个周四
+    dt_last_thu = pd.datetime.today() - pd.tseries.offsets.Week(n=1, weekday=3, normalize=True)
+    db_data_dt = pd.read_sql("select distinct data_dt from thbl.risk_statistics_all", engine_oracle)
+    if dt_last_thu not in set(db_data_dt.data_dt):
+        with engine_oracle.begin() as conn:
+            conn.execute("call RISK_STAT_MONTH('{0}',0)".format(dt_last_thu.strftime('%Y%m%d')))
+            print('新增周四数据：' + dt_last_thu.strftime('%F'))
+
+    # 获取周末数据
+    sql = "select * from thbl.risk_statistics_all where data_dt = TO_DATE('"+dt_last_thu.strftime('%Y%m%d')+"', 'YYYYMMDD')"
+    db_week_end = pd.read_sql(sql, engine_oracle)
     
+    # 周末报表
+    db_data = db_week_end.copy()
+    overdue_weekly = overdue(db_data, dct_dimension, dct_col, ['data_dt'], ['loan_pr_scope'], ['prov_cd'])
+    
+    str_file_name = '风险周报_' + dt_last_thu.strftime('%Y%m%d') + '.xlsx'
+    with pd.ExcelWriter(str_file_name, datetime_format='yyyy-mm-dd') as writer:
+        overdue_weekly[0].to_excel(writer, sheet_name='逾期不良', startrow=0, startcol=0)
+        overdue_weekly[1].to_excel(writer, sheet_name='逾期不良', startrow=0, startcol=overdue_weekly[0].shape[1]+5)
+        overdue_weekly[2].to_excel(writer, sheet_name='逾期不良', startrow=5, startcol=0)
+
+    resize_sheets(str_file_name)
 
     #%% 月末报表==============================
     # 更新月末数据：可修改refresh_all全部刷新
     refresh_all = False
-    lst_month = pd.date_range('20151101',pd.datetime.today(),freq='M')
+    lst_month = pd.date_range('20151101',pd.datetime.today(),freq='m')
     db_data_dt = pd.read_sql("select distinct data_dt from thbl.risk_statistics_all", engine_oracle)
     target_month = lst_month if refresh_all else set(lst_month)-set(db_data_dt.data_dt)
     with engine_oracle.begin() as conn:
         for dt in target_month:
             conn.execute("call RISK_STAT_MONTH('{0}',0)".format(dt.strftime('%Y%m%d')))
-            print('新增数据：' + dt.strftime('%F'))
+            print('新增月末数据：' + dt.strftime('%F'))
 
     # 获取月末数据
     str_month = ', '.join(["TO_DATE('"+x.strftime('%Y%m%d')+"', 'YYYYMMDD')" for x in lst_month])
@@ -333,7 +367,7 @@ if __name__=='__main__':
     toukong_overdue = overdue_toukong(db_data, dct_dimension, dct_col, ['data_dt'])
     toukong_vintage = vintage_toukong(db_data, dct_dimension, dct_col, ['begin_date'])
     
-    str_file_name = '风险报表_' + pd.datetime.today().strftime('%Y%m%d') + '_投控.xlsx'
+    str_file_name = '风险月报_' + pd.datetime.today().strftime('%Y%m%d') + '_投控.xlsx'
     with pd.ExcelWriter(str_file_name, datetime_format='yyyy年mm月') as writer:
         toukong_overdue.to_excel(writer, sheet_name='逾期不良', startrow=0, startcol=0)
         toukong_vintage[0].to_excel(writer, sheet_name='全国30天以下资产情况', startrow=0, startcol=0)
@@ -388,7 +422,7 @@ if __name__=='__main__':
                      status_trans(db_data, dct_dimension, dct_col, ['data_dt'], ['cnt', 'od_amt'], ['cnt', 'diff_od_amt'])
 
         # 输出
-        str_file_name = '风险报表_' + pd.datetime.today().strftime('%Y%m%d') + ('_' + dct_col[gp] if gp in dct_col else '') + '.xlsx'
+        str_file_name = '风险月报_' + pd.datetime.today().strftime('%Y%m%d') + ('_' + dct_col[gp] if gp in dct_col else '') + '.xlsx'
         
         with pd.ExcelWriter(str_file_name, datetime_format='yyyy年mm月') as writer:
             data_overdue[0].to_excel(writer, sheet_name='逾期不良', startrow=0, startcol=0)
