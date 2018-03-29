@@ -192,7 +192,7 @@ def vintage(db_data, dct_dimension, dct_col, gp_keys_all, gp_value = 'od_amt'):
         data_all_value = _patch(data_all_value.set_index([data_all_value.index, dct_col['begin_date']]), 
                                pd.Index(data_all_value[dct_col['begin_date']]))
         
-        # 比例
+        # 比例：每个省份开始放款后的后续月份的逾期金额/对应月份贷款本金
         all_3 = db_data.pivot_table(values='loan_pr', index=gp_keys_all, columns=['data_dt'], aggfunc='sum')
         temp_pct = all_2 / all_3
         
@@ -207,13 +207,20 @@ def vintage(db_data, dct_dimension, dct_col, gp_keys_all, gp_value = 'od_amt'):
                             for x in dct_dimension['stage'].values()])
         
         # 金额
-        data_all_value = _patch(db_data.pivot_table(values=gp_value, index=gp_keys_all[0], columns=['data_dt'], aggfunc='sum'),
-                               pd.DatetimeIndex([x.strftime('%Y/%m/%d') for x in lst_month_break])) #TODO：考虑周频率
+        all_1 = db_data[db_data.data_dt == db_data.data_dt.max()][[gp_keys_all[0]]+['loan_pr']].groupby(gp_keys_all[0]).sum().rename(
+                columns={'loan_pr':'新增放款金额'})
+        all_2 = _patch(db_data.pivot_table(values=gp_value, index=gp_keys_all[0], columns=['data_dt'], aggfunc='sum'),
+                               pd.DatetimeIndex([x.strftime('%Y/%m/%d') for x in lst_month_break]))
         
-        # 比例
-        temp_value = _patch(db_data.pivot_table(values='loan_pr', index=gp_keys_all[0], columns=['data_dt'], aggfunc='sum'),
+        dfs_all = [all_1, all_2]
+        data_all_value = pd.concat(dfs_all, axis=1)
+        
+        # 比例：每个阶段各个月份的逾期金额/对应月份贷款本金
+        all_3 = _patch(db_data.pivot_table(values='loan_pr', index=gp_keys_all[0], columns=['data_dt'], aggfunc='sum'),
                            pd.DatetimeIndex([x.strftime('%Y/%m/%d') for x in lst_month_break]))
-        data_all_pct = data_all_value / temp_value
+        temp_pct = all_2 / all_3
+        dfs_all = [all_1, temp_pct]
+        data_all_pct = pd.concat(dfs_all, axis=1)
         
     else: # 一般情况
         # 金额
@@ -224,7 +231,7 @@ def vintage(db_data, dct_dimension, dct_col, gp_keys_all, gp_value = 'od_amt'):
         dfs_all = [all_1, all_2]
         data_all_value = pd.concat(dfs_all, axis=1)
         
-        # 比例
+        # 比例：各个月贷款本金在后续月份的逾期金额/当月贷款本金
         data_all_pct = data_all_value.apply(lambda x: x/data_all_value['新增放款金额']).replace([pd.np.inf, -pd.np.inf], pd.np.nan)
         data_all_pct.iloc[:,0] = data_all_value.iloc[:,0]
         
