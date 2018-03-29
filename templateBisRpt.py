@@ -179,13 +179,13 @@ def status_trans(db_data, dct_dimension, dct_col, index_values, pivot_values_all
     return([_translate(data_all,dct_dimension,dct_col), 
             _translate(data_trans,dct_dimension,dct_col)])
 
-def vintage(db_data, dct_dimension, dct_col, gp_keys_all):
+def vintage(db_data, dct_dimension, dct_col, gp_keys_all, gp_value = 'od_amt'):
     """vintage表"""
     
     if gp_keys_all == ['prov_cd']: # 特殊处理 prov_cd
         # 金额
         all_1 = db_data[gp_keys_all+['begin_date']].groupby(gp_keys_all).min().sort_values('begin_date').rename(columns=dct_col)
-        all_2 = db_data.pivot_table(values='od_amt', index=gp_keys_all, columns=['data_dt'], aggfunc='sum')
+        all_2 = db_data.pivot_table(values=gp_value, index=gp_keys_all, columns=['data_dt'], aggfunc='sum')
         
         dfs_all = [all_1, all_2]
         data_all_value = pd.concat(dfs_all, axis=1).reindex(all_1.index)
@@ -207,7 +207,7 @@ def vintage(db_data, dct_dimension, dct_col, gp_keys_all):
                             for x in dct_dimension['stage'].values()])
         
         # 金额
-        data_all_value = _patch(db_data.pivot_table(values='od_amt', index=gp_keys_all[0], columns=['data_dt'], aggfunc='sum'),
+        data_all_value = _patch(db_data.pivot_table(values=gp_value, index=gp_keys_all[0], columns=['data_dt'], aggfunc='sum'),
                                pd.DatetimeIndex([x.strftime('%Y/%m/%d') for x in lst_month_break])) #TODO：考虑周频率
         
         # 比例
@@ -219,7 +219,7 @@ def vintage(db_data, dct_dimension, dct_col, gp_keys_all):
         # 金额
         all_1 = db_data[db_data.data_dt == db_data.data_dt.max()][gp_keys_all+['loan_pr']].groupby(gp_keys_all).sum().rename(
                 columns={'loan_pr':'新增放款金额'})
-        all_2 = _patch(db_data.pivot_table(values='od_amt', index=gp_keys_all, columns=['data_dt'], aggfunc='sum'))
+        all_2 = _patch(db_data.pivot_table(values=gp_value, index=gp_keys_all, columns=['data_dt'], aggfunc='sum'))
         
         dfs_all = [all_1, all_2]
         data_all_value = pd.concat(dfs_all, axis=1)
@@ -251,10 +251,15 @@ def vintage_toukong(db_data, dct_dimension, dct_col, gp_keys_all):
     data_all_0 = pd.concat([all_1, all_2], axis=1)
     data_all_30 = pd.concat([all_1, all_3], axis=1)
     data_all_90 = pd.concat([all_1, all_4], axis=1)
+    
+    data_all_30_stage_all = vintage(db_data, dct_dimension, dct_col, ['stage', 'begin_date'], 'od_amt_30')
+    data_all_30_stage_ex_xiamen = vintage(db_data[db_data.prov_cd!='3502'], dct_dimension, dct_col, ['stage', 'begin_date'], 'od_amt_30')
         
     return([_fill_upper(_translate(data_all_0,dct_dimension,dct_col)), 
             _fill_upper(_translate(data_all_30,dct_dimension,dct_col)),
-            _fill_upper(_translate(data_all_90,dct_dimension,dct_col))])
+            _fill_upper(_translate(data_all_90,dct_dimension,dct_col)),
+            data_all_30_stage_all,
+            data_all_30_stage_ex_xiamen])
 
 def reloan(db_data, dct_dimension, dct_col, gp_keys_mcd, gp_keys_db):
     """续贷历史情况，只附加在首续贷表中"""
@@ -348,6 +353,7 @@ if __name__=='__main__':
 
     #%% 月末报表==============================
     # 更新月末数据：可修改refresh_all全部刷新
+    # 客户端更新全量代码：print('\n'.join(["call RISK_STAT_MONTH('{0}',0);".format(dt.strftime('%Y%m%d')) for dt in lst_month]))
     refresh_all = False
     lst_month = pd.date_range('20151101',pd.datetime.today(),freq='m')
     db_data_dt = pd.read_sql("select distinct data_dt from thbl.risk_statistics_all", engine_oracle)
@@ -373,6 +379,10 @@ if __name__=='__main__':
         toukong_vintage[0].to_excel(writer, sheet_name='全国30天以下资产情况', startrow=0, startcol=0)
         toukong_vintage[1].to_excel(writer, sheet_name='全国30天以上资产情况', startrow=0, startcol=0)
         toukong_vintage[2].to_excel(writer, sheet_name='全国90天以上资产情况', startrow=0, startcol=0)
+        toukong_vintage[3][0].to_excel(writer, sheet_name='按阶段全国30天以上资产情况', startrow=0, startcol=0)
+        toukong_vintage[3][1].to_excel(writer, sheet_name='按阶段全国30天以上资产情况', startrow=toukong_vintage[3][0].shape[0]+5, startcol=0)
+        toukong_vintage[4][0].to_excel(writer, sheet_name='按阶段去厦门30天以上资产情况', startrow=0, startcol=0)
+        toukong_vintage[4][1].to_excel(writer, sheet_name='按阶段去厦门30天以上资产情况', startrow=toukong_vintage[4][0].shape[0]+5, startcol=0)
 
     resize_sheets(str_file_name)
 
